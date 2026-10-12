@@ -243,62 +243,101 @@ POLLING_RATE_PAYLOADS = {
 }
 
 
+# DPI encoding comes from the vendor driver's per-sensor tables (OemDrv.exe,
+# table builder at 0x436b40, lookup at 0x437350).  The firmware's sensor is the
+# top nibble of the USB bcdDevice: 0 -> PMW3325, 1 -> PMW3335, 2 -> PMW3330.
+# Every captured DPI write (1000/1600/2000/2400/4000/4900/8000/8900 and the
+# 0xBD default) matches the 3335 table, so it is the fallback.
+SENSOR_3325 = 0x3325
+SENSOR_3335 = 0x3335
+SENSOR_3330 = 0x3330
+_BCD_SENSORS = {0: SENSOR_3325, 1: SENSOR_3335, 2: SENSOR_3330}
+
+# 3335: 100..16000 DPI in 100-DPI steps, one raw byte each, flag always 0.
+_RAW_3335 = bytes.fromhex(
+    "0002030405060709 0a0b0c0d0e101112 1314161718191a1b 1d1e1f2021232526"
+    "2728292a2c2d2e2f 3032333435363839 3a3b3c3e3f404142 4445464748 4a4b4c4d4e"
+    "50515253545657 58595a5c5d5e5f60 626364656668696a 6b6c6e6f70717274"
+    "75767778 7a7b7c7d7e80818283 84868788898a8c8d 8e8f909293949596"
+    "98999a9b9c9e9fa0 a1a2a4a5a6a7a8aa abacadaeb0b1b2b3 b4b5b6b7b8b9babb"
+    "bcbd".replace(" ", ""))
+# 3325: 200..5000 DPI in 100-DPI steps; 6000..10000 reuse half the DPI's raw
+# byte with the record's high-DPI flag set.
+_RAW_3325 = bytes.fromhex(
+    "04060 80b0d0f1214161 91b1d20222427292b 2e30323437393b3e"
+    "404245474 94c4e5053 55575a5c5e61636568 6a6c6f7173".replace(" ", ""))
+
+
+def _dpi_table(sensor: int) -> dict[int, tuple[int, int]]:
+    """``{dpi: (raw, flag)}`` exactly as the vendor driver writes it."""
+    if sensor == SENSOR_3325:
+        table = {200 + 100 * i: (raw, 0) for i, raw in enumerate(_RAW_3325)}
+        for dpi in range(6000, 10001, 1000):
+            table[dpi] = (table[dpi // 2][0], 1)
+        return table
+    if sensor == SENSOR_3330:
+        table = {dpi: (dpi // 50 - 1, 0) for dpi in range(50, 7201, 50)}
+        table.update({dpi: (dpi // 100 - 1, 1) for dpi in range(7300, 12001, 100)})
+        return table
+    return {100 * (i + 1): (raw, 0) for i, raw in enumerate(_RAW_3335)}
+
+
+DPI_TABLES = {sensor: _dpi_table(sensor) for sensor in (SENSOR_3325, SENSOR_3335, SENSOR_3330)}
+_active_sensor = SENSOR_3335
+
+
+def sensor_from_bcd(bcd_device: int) -> int:
+    return _BCD_SENSORS.get((bcd_device >> 12) & 0xF, SENSOR_3335)
+
+
+def set_dpi_sensor(sensor: int) -> None:
+    """Select the DPI table used by the conversion helpers below."""
+    global _active_sensor
+    _active_sensor = sensor if sensor in DPI_TABLES else SENSOR_3335
+
+
+def get_dpi_sensor() -> int:
+    return _active_sensor
+
+
+def dpi_steps(sensor: int | None = None) -> list[int]:
+    return sorted(DPI_TABLES[sensor or _active_sensor])
+
+
+def dpi_record(dpi: int, sensor: int | None = None) -> tuple[int, int, int]:
+    """Snap ``dpi`` to the nearest supported step: ``(dpi, raw, flag)``."""
+    table = DPI_TABLES[sensor or _active_sensor]
+    nearest = min(table, key=lambda step: (abs(step - dpi), step))
+    return (nearest, *table[nearest])
+
+
+def dpi_value_to_tweak(value: int, flag: int = 0) -> int:
+    return (0x55 - ((value * 2) & 0xFF) - flag) & 0xFF
+
+
+def dpi_flag(dpi: int, sensor: int | None = None) -> int:
+    return dpi_record(dpi, sensor)[2]
+
+
+def dpi_to_value(dpi: int, sensor: int | None = None) -> int:
+    """Convert DPI to the raw record byte the vendor driver would write."""
+    return dpi_record(dpi, sensor)[1]
+
+
+def value_to_dpi(value: int, flag: int = 0, sensor: int | None = None) -> int:
+    """Convert a raw record byte (and high-DPI flag) back to DPI."""
+    table = DPI_TABLES[sensor or _active_sensor]
+    candidates = [(dpi, raw) for dpi, (raw, f) in table.items() if f == (flag & 1)]
+    if not candidates:
+        candidates = [(dpi, raw) for dpi, (raw, _f) in table.items()]
+    return min(candidates, key=lambda item: (abs(item[1] - value), item[0]))[0]
+
+
 DPI_PRESETS = {
-    1000: {"value": 0x0B, "tweak": 0x3F},
-    2000: {"value": 0x17, "tweak": 0x27},
-    4000: {"value": 0x2F, "tweak": 0xF7},
-    8000: {"value": 0x5F, "tweak": 0x97},
-    10000: {"value": 0xBD, "tweak": 0xDB},
+    dpi: {"value": DPI_TABLES[SENSOR_3335][dpi][0],
+          "tweak": dpi_value_to_tweak(DPI_TABLES[SENSOR_3335][dpi][0])}
+    for dpi in (1000, 2000, 4000, 8000, 16000)
 }
-
-DPI_VALUE_POINTS = sorted((dpi, info["value"]) for dpi, info in DPI_PRESETS.items())
-DPI_VALUE_POINTS_BY_VALUE = sorted((info["value"], dpi) for dpi, info in DPI_PRESETS.items())
-
-
-def dpi_value_to_tweak(value: int) -> int:
-    return (0x55 - ((value * 2) & 0xFF)) & 0xFF
-
-
-def dpi_to_value(dpi: int) -> int:
-    """Convert DPI to the raw byte value using linear interpolation."""
-    points = DPI_VALUE_POINTS
-    if not points:
-        return 0
-    if dpi <= points[0][0]:
-        (x1, y1), (x2, y2) = points[0], points[1]
-    elif dpi >= points[-1][0]:
-        (x1, y1), (x2, y2) = points[-2], points[-1]
-    else:
-        for i in range(len(points) - 1):
-            x1, y1 = points[i]
-            x2, y2 = points[i + 1]
-            if x1 <= dpi <= x2:
-                break
-    if x2 == x1:
-        return int(max(0, min(255, round(y1))))
-    value = y1 + (dpi - x1) * (y2 - y1) / (x2 - x1)
-    return int(max(0, min(255, round(value))))
-
-
-def value_to_dpi(value: int) -> int:
-    """Convert raw DPI byte value to an approximate DPI."""
-    points = DPI_VALUE_POINTS_BY_VALUE
-    if not points:
-        return 0
-    if value <= points[0][0]:
-        (x1, y1), (x2, y2) = points[0], points[1]
-    elif value >= points[-1][0]:
-        (x1, y1), (x2, y2) = points[-2], points[-1]
-    else:
-        for i in range(len(points) - 1):
-            x1, y1 = points[i]
-            x2, y2 = points[i + 1]
-            if x1 <= value <= x2:
-                break
-    if x2 == x1:
-        return int(round(y1))
-    dpi = y1 + (value - x1) * (y2 - y1) / (x2 - x1)
-    return int(round(dpi))
 
 
 # Macro Repeat Modes
@@ -364,13 +403,27 @@ HID_KEY_USAGE = {
 
 # USB HID Consumer Page codes (for media keys)
 # These use a different packet format than standard keycodes
+# The full set offered by the vendor driver's multimedia/application menus
+# (OemDrv.exe consumer table at 0x40a880).
 MEDIA_KEY_CODES = {
     "PlayPause": 0xCD,
+    "Stop": 0xB7,
     "NextTrack": 0xB5,
     "PrevTrack": 0xB6,
     "Mute": 0xE2,
     "VolumeUp": 0xE9,
     "VolumeDown": 0xEA,
+    "Media Player": 0x183,
+    "Email": 0x18A,
+    "Calculator": 0x192,
+    "My Computer": 0x194,
+    "Browser Search": 0x221,
+    "Browser Home": 0x223,
+    "Browser Back": 0x224,
+    "Browser Forward": 0x225,
+    "Browser Stop": 0x226,
+    "Browser Refresh": 0x227,
+    "Browser Favorites": 0x22A,
 }
 
 # Button action types (from wired USB captures)
@@ -1122,12 +1175,15 @@ def get_macro_slot_info(macro_index: int) -> tuple[int, int]:
     return page, offset
 
 
-def build_dpi(slot_index: int, value: int, tweak: int) -> bytes:
+def build_dpi(slot_index: int, value: int, tweak: int | None = None, flag: int = 0) -> bytes:
+    """DPI record ``[x_raw, y_raw, high_dpi_flag, checksum]`` at ``0x0C + 4*slot``."""
     if not 0 <= slot_index <= 7:
         raise ValueError("slot_index must be 0..7")
     offset = 0x0C + (slot_index * 4)
+    if tweak is None:
+        tweak = dpi_value_to_tweak(value, flag)
     return build_memory_write(offset, bytes((value & 0xFF, value & 0xFF,
-                                             0x00, tweak & 0xFF)))
+                                             flag & 0x01, tweak & 0xFF)))
 
 
 def build_dpi_stage_count(count: int) -> bytes:
@@ -1150,6 +1206,7 @@ class DeviceInfo:
     usage: int = 0
     access_error: str = ""
     selection_note: str = ""
+    release_number: int = 0
 
     @property
     def display_path(self) -> str:
@@ -1295,6 +1352,7 @@ def list_devices(exclude_receivers: bool = False) -> list[DeviceInfo]:
                 usage=item.get("usage", 0),
                 access_error=_probe_open(path),
                 selection_note=note,
+                release_number=item.get("release_number", 0) or 0,
             ))
 
     devices.sort(key=_device_sort_key)

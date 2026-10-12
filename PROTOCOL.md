@@ -171,20 +171,30 @@ Eight four-byte slots start at `0x000c`:
 sum(record) & 0xff == 0x55
 ```
 
-The bundled driver contains sensor-specific DPI lookup tables rather than one
-universal linear formula. Its configuration names sensor families `0x3325` and
-`0x3335`; the active choice is influenced by the device version/sensor nibble.
-Consequently, arbitrary raw-to-DPI interpolation should be described as an
-approximation. Exact captured/default anchors include:
+The bundled driver uses per-sensor lookup tables, not a formula (`OemDrv.exe`
+builder `0x436b40`, lookup `0x437350`). The sensor is the top nibble of the USB
+`bcdDevice`: `0` = PMW3325, `1` = PMW3335, `2` = PMW3330 (`0x43f739`). All three
+tables are implemented in `venus_protocol.DPI_TABLES`:
+
+| Sensor | DPI range | Encoding |
+|---|---|---|
+| `3335` | 100–16000, 100-DPI steps | 160-entry raw table at `0x5c9670`/`0x5c98f0`; flag `00` |
+| `3325` | 200–5000 in 100s, then 6000–10000 in 1000s | 49-entry table at `0x5c91b8`/`0x5c9418`; above 5000 the raw byte for DPI/2 with flag `01` |
+| `3330` | 50–7200 in 50s, 7300–12000 in 100s | `DPI/50-1` (flag `00`), above 7200 `DPI/100-1` (flag `01`) |
+
+Every captured write matches the `3335` table, which is the fallback when
+`bcdDevice` is unavailable:
 
 ```text
-default:  1000=0b, 2000=17, 4000=2f, 8000=5f, 10000=bd
+default:  1000=0b, 2000=17, 4000=2f, 8000=5f, 16000=bd
 captured edits: 1600=12, 2400=1b, 4900=3a, 8900=6a
 ```
 
-The fifth edited filename is ambiguous (`1410` vs `14100`) and is not used as a
-conversion anchor. Raw X/Y and the record checksum are known; a complete
-per-sensor DPI table remains an open item. **Capture, Binary**
+`bd` is the 16000-DPI default from the model configuration (`SENSOR_2 DPI=…,16000`),
+not 10000. Earlier releases interpolated between `5f` and `bd` as if they were
+8000 and 10000, so any custom stage above 8000 was written much higher than
+requested. The driver writes the same raw value to X and Y; its "XY
+independent" control is shown only for sensors `9800`/`3360`. **Capture, Binary**
 
 The application exposes the model-configured one-to-five enabled stages and
 writes the two-byte count record at `0x0002` as `[count, 0x55-count]`. Although
@@ -225,7 +235,7 @@ Action types:
 | `00` | 0 | 0 | disabled |
 | `01` | mouse mask | 0 | native mouse button |
 | `02` | 1 loop, 2 up, 3 down | 0 | DPI control |
-| `04` | delay ms | repeat count | repeated left click/fire |
+| `04` | delay ms | repeat count | repeated left click/fire; the vendor's Double/Triple Click are `04 32 02`/`04 32 03` |
 | `05` | 0 | 0 | execute this index's event-definition slot |
 | `06` | macro slot 0–15 | repeat/mode | execute hardware macro |
 | `07` | 0 | 0 | cycle polling rate |
@@ -233,7 +243,9 @@ Action types:
 | `09` | 0 | 0 | profile switch in generic vendor code; hidden here |
 
 Mouse masks are `01` left, `02` right, `04` middle, `08` back, and `10`
-forward. Thus the exact left-click record is `01 01 00 53`, not one of the old
+forward. The driver's converter (`keyinfo_to_hardware_code`, `0x40a6e0`) has no
+encoding for its generic Scroll Up/Down, R-Double Click, or DPI Lock (`a6`)
+menu entries: they fall through to the error return, so they are not offered. Thus the exact left-click record is `01 01 00 53`, not one of the old
 guessed `f0/f1/f2` records. **Capture, Binary**
 
 ### Event-definition slots
@@ -256,7 +268,9 @@ Statuses:
 
 - `81` / `41`: keyboard usage down/up
 - `80` / `40`: modifier down/up; codes `01/02/04/08` are Ctrl/Shift/Alt/GUI
-- `82` / `42`: 16-bit Consumer Page usage down/up
+- `82` / `42`: 16-bit Consumer Page usage down/up. The driver's media and
+  application menu (`0x40a880`) offers `cd b7 b5 b6 e9 ea e2 183 18a 192 194
+  221 223 224 225 226 227 22a`; all are exposed as Media Key choices.
 
 Each modifier is a separate event. For Ctrl+Shift+1, the vendor emits six
 events: Ctrl down, Shift down, 1 down, Ctrl up, Shift up, 1 up. A combined
@@ -449,9 +463,10 @@ shared vendor utility.
 ## Remaining unknowns
 
 - Exact user-facing meaning of Areson records `0x0004..0x000b`.
-- Complete DPI lookup tables for every Areson sensor/version combination.
 - Whether the generic vendor “stream” lighting path is reachable on this exact
-  firmware.
+  firmware. It belongs only to the separate main-LED zone at `0x00a0`, which
+  this model's configuration hides (`ShowMainEffect=0`); the logo zone at
+  `0x0054` offers Steady/Respiration/Neon/Off.
 - Whether macro back/forward events are accepted by firmware as well as by the
   vendor converter (left/right/middle are the supported UI subset).
 

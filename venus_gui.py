@@ -362,7 +362,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_select.addItems([
             "Keyboard Key", "Left Click", "Right Click", "Middle Click", 
             "Forward", "Back", "Macro",
-            "Fire Key", "Triple Click", "Media Key", "RGB Toggle", 
+            "Fire Key", "Double Click", "Triple Click", "Media Key", "RGB Toggle", 
             "Polling Rate Toggle", "DPI Control", "Disabled"
         ])
         self.editor_layout.addWidget(QtWidgets.QLabel("Action:"))
@@ -2388,6 +2388,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Detect device type and swap profiles
             new_type = dd.detect_device_type(info)
+            if new_type != "holtek":
+                vp.set_dpi_sensor(vp.sensor_from_bcd(info.release_number)
+                                  if info.release_number else vp.SENSOR_3335)
+                self._log(f"Connect: bcdDevice 0x{info.release_number:04x}, "
+                         f"DPI table PMW{vp.get_dpi_sensor():04x}")
             if new_type != self.device_type:
                 self._log(f"Connect: Device type changed: {self.device_type} -> {new_type}")
             self.device_type = new_type
@@ -2477,7 +2482,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Profile Switch", "Disabled",
             ] if is_holtek else [
                 "Keyboard Key", "Left Click", "Right Click", "Middle Click",
-                "Forward", "Back", "Macro", "Fire Key", "Triple Click",
+                "Forward", "Back", "Macro", "Fire Key", "Double Click", "Triple Click",
                 "Media Key", "RGB Toggle", "Polling Rate Toggle",
                 "DPI Control", "Disabled",
             ]
@@ -2560,8 +2565,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dpi_header.setText(
             "Per-profile DPI stages (Holtek stores 1–10 stages at 200-DPI "
             "increments)." if is_holtek else
-            "DPI slots (presets are captured values; custom conversion is "
-            "approximate and sensor-dependent)")
+            "DPI slots (values snap to the sensor's vendor DPI table)")
         preset_values = (sorted(hp.DPI_PRESETS) if is_holtek
                          else sorted(vp.DPI_PRESETS))
         for combo, dpi_spin, value_spin, tweak_spin in self.dpi_rows:
@@ -2696,6 +2700,8 @@ class MainWindow(QtWidgets.QMainWindow):
              
         elif action in ["Fire Key", "Triple Click"]:
             params = {"delay": self.special_delay_spin.value(), "repeat": self.special_repeat_spin.value()}
+        elif action == "Double Click":
+            params = {"delay": 50, "repeat": 2}
              
         elif action == "Disabled":
             pass
@@ -2773,7 +2779,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     break
             return f"Media: {name}"
             
-        elif action in ["Fire Key", "Triple Click"]:
+        elif action in ["Fire Key", "Double Click", "Triple Click"]:
             repeat = params.get("repeat", 3)
             if self.device_type == "holtek":
                 return f"{action} (x{repeat})"
@@ -2963,7 +2969,7 @@ class MainWindow(QtWidgets.QMainWindow):
             reports.append(vp.build_mouse_param(apply_offset, val_map[action]))
         elif action == "DPI Control":
             reports.append(vp.build_dpi_control(apply_offset, params.get("func", 1)))
-        elif action in ["Fire Key", "Triple Click"]:
+        elif action in ["Fire Key", "Double Click", "Triple Click"]:
             reports.append(vp.build_special_binding(
                 apply_offset, params.get("delay", 40), params.get("repeat", 3)))
         elif action == "Polling Rate Toggle":
@@ -3136,12 +3142,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         reports = [vp.build_simple(vp.CMD_READY)]
         reports.append(vp.build_dpi_stage_count(self._dpi_stage_count()))
-        for slot, (_, _, value_spin, tweak_spin) in enumerate(
+        for slot, (_, dpi_spin, value_spin, tweak_spin) in enumerate(
                 self.dpi_rows[:self._dpi_stage_count()]):
             value = value_spin.value()
-            tweak = vp.dpi_value_to_tweak(value)
+            flag = vp.dpi_flag(dpi_spin.value())
+            tweak = vp.dpi_value_to_tweak(value, flag)
             tweak_spin.setValue(tweak)
-            reports.append(vp.build_dpi(slot, value, tweak))
+            reports.append(vp.build_dpi(slot, value, tweak, flag))
         self._send_reports(reports, "DPI slots")
 
     def _on_dpi_spin_changed(self, row_index: int) -> None:
@@ -3156,10 +3163,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 dpi_spin.blockSignals(True)
                 dpi_spin.setValue(dpi_value)
                 dpi_spin.blockSignals(False)
-            value = hp.dpi_to_raw(dpi_value)
+            value, flag = hp.dpi_to_raw(dpi_value), 0
         else:
-            value = vp.dpi_to_value(dpi_value)
-        tweak = vp.dpi_value_to_tweak(value)
+            dpi_value, value, flag = vp.dpi_record(dpi_value)
+            if dpi_spin.value() != dpi_value:
+                dpi_spin.blockSignals(True)
+                dpi_spin.setValue(dpi_value)
+                dpi_spin.blockSignals(False)
+        tweak = vp.dpi_value_to_tweak(value, flag)
 
         combo.blockSignals(True)
         idx = combo.findData(dpi_value)
@@ -3488,13 +3499,8 @@ class MainWindow(QtWidgets.QMainWindow):
             dpi_offsets = [0x0C, 0x10, 0x14, 0x18, 0x1C]
             for i, offset in enumerate(dpi_offsets):
                 val = page0[offset]
-                closest_dpi = 1000
-                min_diff = 999
-                for dpi, info in vp.DPI_PRESETS.items():
-                    if abs(info["value"] - val) < min_diff:
-                        min_diff = abs(info["value"] - val)
-                        closest_dpi = dpi
-                
+                closest_dpi = vp.value_to_dpi(val, page0[offset + 2] & 0x01)
+
                 if i < len(self.dpi_rows):
                     combo, dpi_spin, value_spin, tweak_spin = self.dpi_rows[i]
                     combo.blockSignals(True)
@@ -3511,7 +3517,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     dpi_spin.blockSignals(True)
                     value_spin.blockSignals(True)
                     tweak_spin.blockSignals(True)
-                    dpi_spin.setValue(vp.value_to_dpi(val))
+                    dpi_spin.setValue(closest_dpi)
                     value_spin.setValue(val)
                     tweak_spin.setValue(page0[offset + 3])
                     dpi_spin.blockSignals(False)
@@ -3626,7 +3632,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     params["name"] = self.macro_names.get(
                         macro_index + 1, f"Macro {macro_index + 1}")
                 elif btype == vp.BUTTON_TYPE_SPECIAL:
-                    action = "Triple Click" if d1 == 50 else "Fire Key"
+                    action = ({2: "Double Click", 3: "Triple Click"}.get(d2, "Fire Key")
+                              if d1 == 50 else "Fire Key")
                     params["delay"] = d1
                     params["repeat"] = d2
                 elif btype == vp.BUTTON_TYPE_POLL_RATE:

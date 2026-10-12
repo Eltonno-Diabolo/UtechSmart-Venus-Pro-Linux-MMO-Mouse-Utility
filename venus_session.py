@@ -36,7 +36,7 @@ CONFIG_DIR_NAME = "venus_pro_linux"
 
 ARESON_ACTIONS = [
     "Keyboard Key", "Left Click", "Right Click", "Middle Click",
-    "Forward", "Back", "Macro", "Fire Key", "Triple Click",
+    "Forward", "Back", "Macro", "Fire Key", "Double Click", "Triple Click",
     "Media Key", "RGB Toggle", "Polling Rate Toggle",
     "DPI Control", "Disabled",
 ]
@@ -196,7 +196,7 @@ def describe_binding(action: str, params: dict, device_type: str = "venus_pro") 
         code = params.get("code", 0)
         name = next((k for k, v in vp.MEDIA_KEY_CODES.items() if v == code), "Unknown")
         return f"Media: {name}"
-    if action in ("Fire Key", "Triple Click"):
+    if action in ("Fire Key", "Double Click", "Triple Click"):
         repeat = params.get("repeat", 3)
         if device_type == "holtek":
             return f"{action} (x{repeat})"
@@ -220,16 +220,11 @@ def parse_areson_config(page0: bytes, page1: bytes, page2: bytes,
     if 1 <= stage_count <= 5:
         config.dpi_stage_count = stage_count
     for offset in (0x0C, 0x10, 0x14, 0x18, 0x1C):
-        value = page0[offset]
-        closest_dpi, min_diff = 1000, 999
-        for dpi, info in vp.DPI_PRESETS.items():
-            if abs(info["value"] - value) < min_diff:
-                min_diff = abs(info["value"] - value)
-                closest_dpi = dpi
-        exact = vp.DPI_PRESETS.get(closest_dpi, {}).get("value") == value
+        value, flag = page0[offset], page0[offset + 2] & 0x01
+        dpi = vp.value_to_dpi(value, flag)
         config.dpi_stages.append(DpiStage(
-            dpi=closest_dpi if exact else vp.value_to_dpi(value),
-            raw=value, tweak=page0[offset + 3], preset=exact))
+            dpi=dpi, raw=value, tweak=page0[offset + 3],
+            preset=vp.DPI_PRESETS.get(dpi, {}).get("value") == value))
 
     config.polling_rate = vp.POLLING_CODE_TO_RATE.get(page0[0x00])
 
@@ -283,7 +278,9 @@ def parse_areson_config(page0: bytes, page1: bytes, page2: bytes,
                       "count": d2 if 0x01 <= d2 <= 0xFD else 1,
                       "name": macro_names.get(d1 + 1, f"Macro {d1 + 1}")}
         elif btype == vp.BUTTON_TYPE_SPECIAL:
-            action = "Triple Click" if d1 == 50 else "Fire Key"
+            # The vendor writes Double/Triple Click as 50 ms repeats of 2/3.
+            action = ({2: "Double Click", 3: "Triple Click"}.get(d2, "Fire Key")
+                      if d1 == 50 else "Fire Key")
             params = {"delay": d1, "repeat": d2}
         elif btype == vp.BUTTON_TYPE_POLL_RATE:
             action = "Polling Rate Toggle"
@@ -437,6 +434,11 @@ class VenusSession:
             return result
 
         new_type = dd.detect_device_type(info)
+        if new_type != "holtek":
+            vp.set_dpi_sensor(vp.sensor_from_bcd(info.release_number)
+                              if info.release_number else vp.SENSOR_3335)
+            self.log(f"Connect: bcdDevice 0x{info.release_number:04x}, "
+                     f"DPI table PMW{vp.get_dpi_sensor():04x}")
         if new_type != self.device_type:
             self.log(f"Connect: Device type changed: {self.device_type} -> {new_type}")
         self.set_device_type(new_type)
@@ -698,7 +700,7 @@ class VenusSession:
             reports.append(vp.build_mouse_param(apply_offset, MOUSE_ACTION_VALUES[action]))
         elif action == "DPI Control":
             reports.append(vp.build_dpi_control(apply_offset, params.get("func", 1)))
-        elif action in ("Fire Key", "Triple Click"):
+        elif action in ("Fire Key", "Double Click", "Triple Click"):
             reports.append(vp.build_special_binding(
                 apply_offset, params.get("delay", 40), params.get("repeat", 3)))
         elif action == "Polling Rate Toggle":
@@ -976,7 +978,7 @@ class VenusSession:
             return
         reports = [vp.build_simple(vp.CMD_READY), vp.build_dpi_stage_count(stage_count)]
         for slot, stage in enumerate(stages):
-            reports.append(vp.build_dpi(slot, stage.raw, vp.dpi_value_to_tweak(stage.raw)))
+            reports.append(vp.build_dpi(slot, stage.raw, flag=vp.dpi_flag(stage.dpi)))
         self.send_reports(reports, "DPI slots")
 
     # -- advanced ---------------------------------------------------------
@@ -1216,7 +1218,7 @@ class VenusSession:
                 buttons=assignments, dpi_stage_count=5,
                 dpi_stages=[DpiStage(d, vp.DPI_PRESETS[d]["value"],
                                      vp.DPI_PRESETS[d]["tweak"], True)
-                            for d in (1000, 2000, 4000, 8000, 10000)],
+                            for d in (1000, 2000, 4000, 8000, 16000)],
                 polling_rate=1000, rgb=RgbState(76, 175, 80, vp.RGB_MODE_STEADY, 15))
         self.button_assignments = deepcopy(config.buttons)
         self.staging.load_base_state(self.button_assignments)

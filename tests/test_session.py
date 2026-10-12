@@ -27,7 +27,7 @@ class ParserTests(unittest.TestCase):
         config = vs.parse_areson_config(page0, page1, bytes(256))
         self.assertEqual(config.dpi_stage_count, 5)
         self.assertEqual([stage.dpi for stage in config.dpi_stages],
-                         [1000, 2000, 4000, 8000, 10000])
+                         [1000, 2000, 4000, 8000, 16000])
         self.assertTrue(all(stage.preset for stage in config.dpi_stages))
         self.assertEqual(config.polling_rate, 125)
         self.assertEqual((config.rgb.r, config.rgb.g, config.rgb.b), (255, 0, 255))

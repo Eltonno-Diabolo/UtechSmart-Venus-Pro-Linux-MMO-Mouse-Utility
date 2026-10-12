@@ -562,6 +562,8 @@ class VenusBackend(QtCore.QObject):
             params = {"func": int(state.get("dpiFunc", 1))}
         elif action in ("Fire Key", "Triple Click"):
             params = {"delay": int(state.get("delay", 40)), "repeat": int(state.get("repeat", 3))}
+        elif action == "Double Click":
+            params = {"delay": 50, "repeat": 2}
         self.session.stage_binding(key, action, params)
         self._rebuild_buttons()
         self._load_editor()
@@ -1054,8 +1056,7 @@ class VenusBackend(QtCore.QObject):
             "showRaw": not holtek,
             "header": ("Per-profile DPI stages (Holtek stores 1–10 stages at 200-DPI increments)."
                        if holtek else
-                       "DPI slots (presets are captured values; custom conversion is "
-                       "approximate and sensor-dependent)."),
+                       "DPI slots (values snap to the sensor's vendor DPI table)."),
             "min": 200 if holtek else 100, "max": 28000 if holtek else 20000,
             "step": 200 if holtek else 100,
             "presets": self._dpi_presets(),
@@ -1102,9 +1103,10 @@ class VenusBackend(QtCore.QObject):
             raw = hp.dpi_to_raw(dpi)
             preset = dpi in hp.DPI_PRESETS
         else:
-            dpi = max(100, min(20000, int(dpi)))
-            raw = vp.dpi_to_value(dpi)
+            dpi, raw, flag = vp.dpi_record(int(dpi))
             preset = dpi in vp.DPI_PRESETS and vp.DPI_PRESETS[dpi]["value"] == raw
+            self._store_stage(row, vs.DpiStage(dpi, raw, vp.dpi_value_to_tweak(raw, flag), preset))
+            return
         self._store_stage(row, vs.DpiStage(dpi, raw, vp.dpi_value_to_tweak(raw), preset))
 
     @QtCore.pyqtSlot(int, int)

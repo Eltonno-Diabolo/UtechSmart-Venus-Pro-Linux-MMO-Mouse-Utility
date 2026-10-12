@@ -301,5 +301,32 @@ class DeviceTests(unittest.TestCase):
         fake_handle.open_path.assert_called_with(b"/dev/hidraw-config")
 
 
+class VendorTableTests(unittest.TestCase):
+    """Values recovered from the Windows driver's DPI and action tables."""
+
+    def test_dpi_tables_match_captured_writes(self):
+        for dpi, raw in ((1000, 0x0B), (1600, 0x12), (2400, 0x1B), (4900, 0x3A),
+                         (8900, 0x6A), (16000, 0xBD)):
+            self.assertEqual(vp.dpi_record(dpi, vp.SENSOR_3335), (dpi, raw, 0))
+        self.assertEqual(vp.value_to_dpi(0xBD, sensor=vp.SENSOR_3335), 16000)
+        # 3325 doubles above 5000 DPI with the record's high-DPI flag.
+        self.assertEqual(vp.dpi_record(8000, vp.SENSOR_3325), (8000, 0x5C, 1))
+        self.assertEqual(vp.build_dpi(0, 0x5C, flag=1)[5:10], bytes((0x04, 0x5C, 0x5C, 0x01, 0x9C)))
+        self.assertEqual(vp.sensor_from_bcd(0x1001), vp.SENSOR_3335)
+
+    def test_double_click_and_extended_consumer_keys(self):
+        import venus_session as vs
+        session = vs.VenusSession.__new__(vs.VenusSession)
+        session.device_type = "venus_pro"
+        packets = session.build_packets_for_key("Button 1", "Double Click", {"delay": 50, "repeat": 2})
+        self.assertEqual(packets[-1][5:10], bytes((0x04, 0x04, 0x32, 0x02, 0x1D)))
+        page0 = bytearray(0xA0)
+        page0[0x60:0x64] = bytes((0x04, 0x32, 0x02, 0x1D))
+        config = vs.parse_areson_config(bytes(page0), bytes(256), bytes(256))
+        self.assertEqual(config.buttons["Button 1"]["action"], "Double Click")
+        definition = vp.build_consumer_binding(0x01, 0x00, vp.MEDIA_KEY_CODES["Calculator"])
+        self.assertIn(bytes((0x82, 0x92, 0x01, 0x42, 0x92, 0x01)), b"".join(definition))
+
+
 if __name__ == "__main__":
     unittest.main()

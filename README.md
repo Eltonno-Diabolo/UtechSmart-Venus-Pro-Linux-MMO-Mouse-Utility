@@ -180,6 +180,11 @@ If your device reports a different ID, verify support before assuming compatibil
 - **Controller-aware UI:** Shows only actions the connected Areson or Holtek
   controller can encode; confirmed Holtek Profile Switch and physical DPI
   button rebinding are exposed directly.
+- **Vendor-parity actions:** Double Click plus the vendor's full media and
+  application key set (stop, media player, mail, calculator, My Computer,
+  browser search/home/back/forward/stop/refresh/favorites).
+- **Exact DPI steps:** DPI values use the Windows driver's own per-sensor tables
+  (selected from the device's `bcdDevice`), up to 16000 DPI on the PMW3335.
 - **Polling Rate:** Adjust USB polling rate between 125Hz and 1000Hz.
 - **Factory Reset:** Restore Areson devices to their original state when
   troubleshooting or unwinding experiments.
