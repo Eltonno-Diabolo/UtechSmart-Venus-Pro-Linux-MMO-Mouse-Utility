@@ -37,7 +37,7 @@ flatpak-builder --user --force-clean --state-dir="${BUILD_ROOT}/state" \
     "${BUILD_ROOT}/build" \
     "${SCRIPT_DIR}/${VENUS_APP_ID}.yml"
 # Every module the Widgets window imports must be in the bundle.
-flatpak-builder --run --state-dir="${BUILD_ROOT}/state" "${BUILD_ROOT}/build" \
+flatpak-builder --run "${BUILD_ROOT}/build" \
     "${SCRIPT_DIR}/${VENUS_APP_ID}.yml" \
     python3 -c 'import sys; sys.path.insert(0, "/app/share/venusprolinux"); import hid, venus_gui'
 
