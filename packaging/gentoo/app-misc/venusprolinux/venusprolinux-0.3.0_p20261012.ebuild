@@ -19,7 +19,7 @@ EGIT_REPO_URI="file:///home/cabewse/git/QindaVenusPro.git
 	file:///home/cabewse/work_space/QindaVenusPro"
 # AGENT-NOTE: an immutable pin, not a branch - a package built twice must be
 # the same package. Bump it together with the version.
-EGIT_COMMIT="730b0f22732aec9227daaee572b81f7eaab14ef9"
+EGIT_COMMIT="f48d6f91a869dda0e4e9408f6baf9ee3f1216f0f"
 
 LICENSE="MIT"
 SLOT="0"
