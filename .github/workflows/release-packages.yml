@@ -9,7 +9,7 @@ on:
       version:
         description: Version without the leading v
         required: true
-        default: 0.3.0
+        default: 0.4.0
 
 permissions:
   contents: write
@@ -27,12 +27,18 @@ jobs:
           VERSION="${RELEASE_VERSION#v}"
           command -v dpkg-deb
           bash packaging/deb/build-deb.sh "$VERSION"
-      - name: Verify Debian dependencies and imports
+      - name: Install and launch on Debian and Ubuntu
         run: |
-          docker run --rm -v "$PWD/dist:/packages:ro" debian:13-slim sh -lc '
-            apt-get update -qq &&
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /packages/*.deb &&
-            python3 -c "import hid; from PyQt6 import QtCore, QtGui, QtWidgets"'
+          for image in debian:12-slim debian:13-slim ubuntu:24.04 ubuntu:latest; do
+            echo "::group::${image}"
+            docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/packaging:/packaging:ro" \
+              "${image}" sh -ec '
+                apt-get update -qq
+                DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /packages/*.deb >/dev/null
+                sh /packaging/smoke-test.sh
+                sh /packaging/smoke-test.sh venusprolinux --qindatk'
+            echo "::endgroup::"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: deb
@@ -42,15 +48,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build and verify Fedora RPM
+      - name: Build Fedora RPM
         run: |
           VERSION="${RELEASE_VERSION#v}"
           mkdir -p dist
           docker run --rm -v "$PWD:/src" -w /src fedora:43 bash -lc "
             dnf install -y -q rpm-build redhat-rpm-config systemd-rpm-macros tar gzip &&
-            bash packaging/rpm/build-rpm.sh '$VERSION' &&
-            dnf install -y -q /src/dist/*.rpm &&
-            python3 -c 'import hid; from PyQt6 import QtCore, QtGui, QtWidgets'"
+            bash packaging/rpm/build-rpm.sh '$VERSION'"
+      - name: Install and launch on Fedora
+        run: |
+          for image in fedora:43 fedora:latest; do
+            echo "::group::${image}"
+            docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/packaging:/packaging:ro" \
+              "${image}" sh -ec '
+                dnf install -y -q /packages/*.rpm
+                sh /packaging/smoke-test.sh'
+            echo "::endgroup::"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: rpm
@@ -69,7 +83,7 @@ jobs:
             useradd -m builder && chown builder:builder /out &&
             su builder -c \"DIST_DIR=/out bash /src/packaging/arch/build-arch.sh '$VERSION'\" &&
             pacman -U --noconfirm /out/*.pkg.tar.zst &&
-            python -c 'import sys; sys.path.insert(0, \"/usr/share/venusprolinux\"); import hid, venus_gui'"
+            sh /src/packaging/smoke-test.sh"
       - uses: actions/upload-artifact@v4
         with:
           name: arch
@@ -83,14 +97,20 @@ jobs:
         run: |
           VERSION="${RELEASE_VERSION#v}"
           bash packaging/appimage/build-appimage.sh "$VERSION"
-      - name: Smoke-test AppImage without host Python or Qt packages
+      - name: Launch the AppImage without host Python or Qt packages
         run: |
-          docker run --rm -v "$PWD/dist:/packages:ro" debian:13-slim sh -lc '
-            apt-get update -qq && apt-get install -y -qq libegl1 libgl1 >/dev/null &&
-            set +e
-            QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 timeout 8 /packages/*.AppImage
-            status=$?
-            test "$status" -eq 0 -o "$status" -eq 124'
+          launch() {
+            echo "::group::$1"
+            docker run --rm -e APPIMAGE_EXTRACT_AND_RUN=1 \
+              -v "$PWD/dist:/packages:ro" -v "$PWD/packaging:/packaging:ro" \
+              "$1" sh -ec "$2"' >/dev/null
+                sh /packaging/smoke-test.sh /packages/*.AppImage'
+            echo "::endgroup::"
+          }
+          launch debian:12-slim 'apt-get update -qq && apt-get install -y -qq libegl1 libgl1'
+          launch debian:13-slim 'apt-get update -qq && apt-get install -y -qq libegl1 libgl1'
+          launch fedora:latest 'dnf install -y -q mesa-libEGL mesa-libGL'
+          launch archlinux:latest 'pacman -Sy --noconfirm --needed libglvnd mesa'
       - uses: actions/upload-artifact@v4
         with:
           name: appimage
@@ -117,6 +137,14 @@ jobs:
         run: |
           VERSION="${RELEASE_VERSION#v}"
           bash packaging/portable/build-tarball.sh "$VERSION"
+      - name: Install and launch the payload on openSUSE Tumbleweed
+        run: |
+          docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/packaging:/packaging:ro" \
+            opensuse/tumbleweed sh -ec '
+              zypper -q -n install python3 python3-PyQt6 python3-hidapi tar gzip
+              tar -xzf /packages/*.tar.gz -C /tmp
+              cp -a /tmp/venusprolinux-*-linux-any/usr/. /usr/
+              sh /packaging/smoke-test.sh'
       - uses: actions/upload-artifact@v4
         with:
           name: portable

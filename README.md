@@ -26,10 +26,10 @@ Download the package for your distribution from the
 
 The native packages install the udev access rule automatically. Flatpak and
 AppImage cannot install host udev rules. Download and install the reviewed
-v0.3.0 rule once, then reconnect the mouse or receiver:
+v0.4.0 rule once, then reconnect the mouse or receiver:
 
 ```bash
-curl -LO https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.3.0/packaging/linux/99-venus-pro.rules
+curl -LO https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.4.0/packaging/linux/99-venus-pro.rules
 sudo install -Dm644 99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
 sudo udevadm control --reload-rules
 ```

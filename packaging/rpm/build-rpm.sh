@@ -17,6 +17,7 @@ mkdir -p "${TOPDIR}"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} \
     "${SOURCE_DIR}/packaging/linux" "${SOURCE_DIR}/docs"
 install -m644 \
     "${VENUS_REPO_ROOT}/venus_gui.py" \
+    "${VENUS_REPO_ROOT}/venus_keys.py" \
     "${VENUS_REPO_ROOT}/venus_protocol.py" \
     "${VENUS_REPO_ROOT}/holtek_protocol.py" \
     "${VENUS_REPO_ROOT}/device_driver.py" \

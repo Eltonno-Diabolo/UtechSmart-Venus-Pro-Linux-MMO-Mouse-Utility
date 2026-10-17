@@ -1,4 +1,4 @@
-%{!?venus_version:%global venus_version 0.3.0}
+%{!?venus_version:%global venus_version 0.4.0}
 %global app_id com.github.es00bac.venusprolinux
 
 Name:           venusprolinux
@@ -37,7 +37,7 @@ install -d \
     %{buildroot}%{_udevrulesdir}
 
 install -m644 \
-    venus_gui.py venus_protocol.py holtek_protocol.py device_driver.py \
+    venus_gui.py venus_keys.py venus_protocol.py holtek_protocol.py device_driver.py \
     staging_manager.py transaction_controller.py mouseimg.png icon.png \
     %{buildroot}%{_datadir}/%{name}/
 install -m755 packaging/linux/venusprolinux \
@@ -62,5 +62,9 @@ install -m644 packaging/linux/99-venus-pro.rules \
 %{_udevrulesdir}/99-venus-pro.rules
 
 %changelog
+* Fri Oct 16 2026 Es00bac <es00bac@github.com> - 0.4.0-1
+- Windows driver parity: Double Click, full consumer keys, exact DPI tables.
+- Install venus_keys.py, which the Widgets interface imports.
+
 * Wed Aug 19 2026 Es00bac <es00bac@github.com> - 0.3.0-1
 - Add controller-aware configuration, expanded macros, and release packaging.

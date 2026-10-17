@@ -53,6 +53,17 @@
     <name>Es00bac</name>
   </developer>
   <releases>
+    <release version="0.4.0" date="2026-10-16">
+      <description>
+        <p>Feature parity with the Windows driver, and packaging fixes.</p>
+        <ul>
+          <li>New Double Click button action.</li>
+          <li>Media keys cover the Windows driver's full consumer key set.</li>
+          <li>DPI stages use the driver's per-sensor tables, fixing custom stages above 8000 DPI.</li>
+          <li>Debian, Fedora, Flatpak and portable packages include every module the window needs.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-08-19" />
   </releases>
   <content_rating type="oars-1.1" />

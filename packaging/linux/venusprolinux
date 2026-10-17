@@ -21,6 +21,12 @@ esac
 if [ -z "$ui" ]; then
     if [ -f "${app}/venus_qml.py" ]; then ui=qindatk; else ui=widgets; fi
 fi
+# Packages without QindaTK still carry its desktop action; open the Widgets
+# window there instead of failing silently from the menu.
+if [ "$ui" = qindatk ] && [ ! -f "${app}/venus_qml.py" ] && [ -f "${app}/venus_gui.py" ]; then
+    echo "venusprolinux: the QindaTK interface is not installed; starting the Qt Widgets one" >&2
+    ui=widgets
+fi
 
 case "$ui" in
     qindatk)
